@@ -50,13 +50,14 @@
 <script>
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { gsap } from 'gsap';
 import axios from 'axios';
+import { getCurrentInstance } from 'vue';
 
 export default {
   name: 'App',
   data() {
     return {
+      instance: null,
       scene: null,
       camera: null,
       renderer: null,
@@ -75,6 +76,10 @@ export default {
     };
   },
   mounted() {
+    this.instance = getCurrentInstance();
+    const { proxy } = this.instance;
+    proxy.$scene = new THREE.Scene();
+    
     this.initThreeJS();
     this.animate();
     window.addEventListener('resize', this.onWindowResize);
@@ -87,8 +92,8 @@ export default {
   },
   methods: {
     initThreeJS() {
-      // 创建场景
-      this.scene = new THREE.Scene();
+      // 创建场景 - 使用 proxy.$scene
+      this.scene = this.instance.proxy.$scene;
       
       // 创建相机
       this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -158,10 +163,6 @@ export default {
       points.push(origin);
       points.push(antipode);
       
-      const geometry = new THREE.BufferGeometry().setFromPoints(points);
-      const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
-      const line = new THREE.Line(geometry, material);
-      
       // 创建曲线
       const curve = new THREE.CatmullRomCurve3(points);
       const curveGeometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(50));
@@ -228,14 +229,14 @@ export default {
         this.scene.add(this.connectionLine);
         
         // 获取位置信息
-        this.getLocationInfo(lat, lon, antipodeLat, antipodeLon);
+        this.getLocationInfo(lat, lon);
         
         // 显示信息面板
         this.showInfo = true;
       }
     },
     
-    getLocationInfo(lat, lon, antipodeLat, antipodeLon) {
+    getLocationInfo(lat, lon) {
       // 获取原始位置信息
       axios.get(`http://localhost:5000/api/antipode?lat=${lat}&lon=${lon}`)
         .then(response => {
@@ -256,7 +257,22 @@ export default {
     animate() {
       requestAnimationFrame(this.animate);
       this.controls.update();
-      this.renderer.render(this.scene, this.camera);
+      
+      // 使用 instance.proxy 渲染场景
+      const scene = this.instance.proxy.$scene;
+      this.renderer.render(scene, this.camera);
+    },
+    
+    // 添加截图功能，按照解决方案的示例
+    snapShot() {
+      const camera = this.camera;
+      if(!camera) return;
+      const scene = this.instance.proxy.$scene;
+      const strMime = "image/png";
+      const renderer = this.renderer;
+      renderer.render(scene, camera);
+      const canvas = this.renderer.domElement;
+      return canvas.toDataURL(strMime);
     },
     
     dispose() {
