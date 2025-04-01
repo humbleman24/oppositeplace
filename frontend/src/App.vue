@@ -2,60 +2,40 @@
   <div class="app-container">
     <header>
       <h1>找到地球的另一端</h1>
+      <p class="instructions">左键拖动旋转地球，右键点击选择位置</p>
     </header>
     
     <main>
-      <div class="location-input">
-        <div class="input-group">
-          <label for="location">输入位置或地标：</label>
-          <input 
-            type="text" 
-            id="location" 
-            v-model="locationInput" 
-            placeholder="例如：北京, 中国" 
-            @keyup.enter="searchLocation"
-          />
-          <button @click="searchLocation">搜索</button>
-        </div>
-        
-        <div class="or-divider">或者</div>
-        
-        <button @click="useCurrentLocation" class="current-location-btn">
-          使用我的当前位置
-        </button>
-        
-        <div v-if="error" class="error-message">
-          {{ error }}
-        </div>
-      </div>
-      
-      <div class="maps-container" v-if="showMaps">
-        <div class="map-wrapper">
-          <h2>当前位置</h2>
-          <div id="originMap" class="map"></div>
-          <div class="location-info" v-if="originInfo.length > 0">
-            <h3>附近地点</h3>
-            <div v-for="(place, index) in originInfo" :key="'origin-'+index" class="place-info">
-              <h4>{{ place.title }}</h4>
-              <p>{{ place.summary }}</p>
-              <a :href="place.url" target="_blank">查看更多信息</a>
+      <div class="globe-container">
+        <div id="globe"></div>
+        <div class="info-panel" v-if="showInfo">
+          <div class="info-content">
+            <h3>当前位置</h3>
+            <p>纬度: {{ originCoords.lat.toFixed(2) }}°</p>
+            <p>经度: {{ originCoords.lon.toFixed(2) }}°</p>
+            <div v-if="originInfo.length > 0">
+              <h4>附近地点</h4>
+              <div v-for="(place, index) in originInfo" :key="'origin-'+index" class="place-info">
+                <h5>{{ place.title }}</h5>
+                <p>{{ place.summary }}</p>
+                <a :href="place.url" target="_blank">查看更多信息</a>
+              </div>
             </div>
-          </div>
-        </div>
-        
-        <div class="map-wrapper">
-          <h2>对面位置</h2>
-          <div id="antipodeMap" class="map"></div>
-          <div class="location-info" v-if="antipodeInfo.length > 0">
-            <h3>附近地点</h3>
-            <div v-for="(place, index) in antipodeInfo" :key="'antipode-'+index" class="place-info">
-              <h4>{{ place.title }}</h4>
-              <p>{{ place.summary }}</p>
-              <a :href="place.url" target="_blank">查看更多信息</a>
+            
+            <h3>对面位置</h3>
+            <p>纬度: {{ antipodeCoords.lat.toFixed(2) }}°</p>
+            <p>经度: {{ antipodeCoords.lon.toFixed(2) }}°</p>
+            <div v-if="antipodeInfo.length > 0">
+              <h4>附近地点</h4>
+              <div v-for="(place, index) in antipodeInfo" :key="'antipode-'+index" class="place-info">
+                <h5>{{ place.title }}</h5>
+                <p>{{ place.summary }}</p>
+                <a :href="place.url" target="_blank">查看更多信息</a>
+              </div>
             </div>
-          </div>
-          <div v-else class="no-info">
-            <p>这个位置可能是海洋或者人烟稀少的地区，没有找到相关信息</p>
+            <div v-else class="no-info">
+              <p>这个位置可能是海洋或者人烟稀少的地区，没有找到相关信息</p>
+            </div>
           </div>
         </div>
       </div>
@@ -68,159 +48,219 @@
 </template>
 
 <script>
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { gsap } from 'gsap';
 import axios from 'axios';
-import L from 'leaflet';
 
 export default {
   name: 'App',
   data() {
     return {
-      locationInput: '',
-      originMap: null,
-      antipodeMap: null,
+      scene: null,
+      camera: null,
+      renderer: null,
+      globe: null,
+      controls: null,
       originMarker: null,
       antipodeMarker: null,
+      connectionLine: null,
+      originCoords: { lat: 0, lon: 0 },
+      antipodeCoords: { lat: 0, lon: 0 },
       originInfo: [],
       antipodeInfo: [],
-      error: null,
-      showMaps: false,
-      currentCoords: {
-        lat: null,
-        lon: null,
-      },
-      antipodeCoords: {
-        lat: null,
-        lon: null,
-      }
+      showInfo: false,
+      raycaster: null,
+      mouse: null
     };
   },
   mounted() {
-    // 创建地图但不显示，直到用户输入位置
-    this.initMaps();
+    this.initThreeJS();
+    this.animate();
+    window.addEventListener('resize', this.onWindowResize);
+    window.addEventListener('contextmenu', this.onRightClick);
+  },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.onWindowResize);
+    window.removeEventListener('contextmenu', this.onRightClick);
+    this.dispose();
   },
   methods: {
-    initMaps() {
-      // 初始化地图但不显示
-      this.originMap = L.map('originMap', {
-        center: [0, 0],
-        zoom: 2
-      });
+    initThreeJS() {
+      // 创建场景
+      this.scene = new THREE.Scene();
       
-      this.antipodeMap = L.map('antipodeMap', {
-        center: [0, 0],
-        zoom: 2
-      });
+      // 创建相机
+      this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      this.camera.position.z = 5;
       
-      // 添加地图图层
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(this.originMap);
+      // 创建渲染器
+      this.renderer = new THREE.WebGLRenderer({ antialias: true });
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      document.getElementById('globe').appendChild(this.renderer.domElement);
       
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(this.antipodeMap);
+      // 创建控制器
+      this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.enableDamping = true;
+      this.controls.dampingFactor = 0.05;
+      
+      // 创建地球
+      this.createGlobe();
+      
+      // 初始化射线检测器和鼠标位置
+      this.raycaster = new THREE.Raycaster();
+      this.mouse = new THREE.Vector2();
+      
+      // 添加环境光和平行光
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      this.scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      directionalLight.position.set(5, 3, 5);
+      this.scene.add(directionalLight);
     },
     
-    useCurrentLocation() {
-      if (navigator.geolocation) {
-        this.error = null;
-        navigator.geolocation.getCurrentPosition(
-          position => {
-            this.currentCoords.lat = position.coords.latitude;
-            this.currentCoords.lon = position.coords.longitude;
-            this.getAntipodeInfo(this.currentCoords.lat, this.currentCoords.lon);
-          },
-          error => {
-            this.error = `无法获取您的位置: ${error.message}`;
-          }
-        );
-      } else {
-        this.error = "您的浏览器不支持地理位置功能";
+    createGlobe() {
+      // 创建地球几何体
+      const geometry = new THREE.SphereGeometry(2, 64, 64);
+      
+      // 加载地球纹理
+      const textureLoader = new THREE.TextureLoader();
+      const texture = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_atmos_2048.jpg');
+      const bumpMap = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_normal_2048.jpg');
+      const specularMap = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_specular_2048.jpg');
+      
+      // 创建材质
+      const material = new THREE.MeshPhongMaterial({
+        map: texture,
+        bumpMap: bumpMap,
+        bumpScale: 0.05,
+        specularMap: specularMap,
+        specular: new THREE.Color('grey'),
+        shininess: 5
+      });
+      
+      // 创建地球网格
+      this.globe = new THREE.Mesh(geometry, material);
+      this.scene.add(this.globe);
+    },
+    
+    createMarker(position, color) {
+      const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+      const material = new THREE.MeshBasicMaterial({ color: color });
+      const marker = new THREE.Mesh(geometry, material);
+      marker.position.copy(position);
+      return marker;
+    },
+    
+    createConnectionLine(origin, antipode) {
+      const points = [];
+      points.push(origin);
+      points.push(antipode);
+      
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+      const line = new THREE.Line(geometry, material);
+      
+      // 创建曲线
+      const curve = new THREE.CatmullRomCurve3(points);
+      const curveGeometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(50));
+      const curveMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+      const curveLine = new THREE.Line(curveGeometry, curveMaterial);
+      
+      return curveLine;
+    },
+    
+    latLonToVector3(lat, lon) {
+      const phi = (90 - lat) * (Math.PI / 180);
+      const theta = (lon + 180) * (Math.PI / 180);
+      const x = -(2 * Math.sin(phi) * Math.cos(theta));
+      const y = 2 * Math.cos(phi);
+      const z = 2 * Math.sin(phi) * Math.sin(theta);
+      return new THREE.Vector3(x, y, z);
+    },
+    
+    onRightClick(event) {
+      event.preventDefault();
+      
+      // 计算鼠标在标准化设备坐标中的位置
+      this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      
+      // 更新射线检测器
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      
+      // 检测与地球的交点
+      const intersects = this.raycaster.intersectObject(this.globe);
+      
+      if (intersects.length > 0) {
+        const point = intersects[0].point;
+        const lat = Math.asin(point.y / 2) * (180 / Math.PI);
+        const lon = Math.atan2(point.z, -point.x) * (180 / Math.PI) - 180;
+        
+        // 更新坐标
+        this.originCoords = { lat, lon };
+        
+        // 计算对面位置
+        const antipodeLat = -lat;
+        const antipodeLon = lon <= 0 ? lon + 180 : lon - 180;
+        this.antipodeCoords = { lat: antipodeLat, lon: antipodeLon };
+        
+        // 创建标记
+        if (this.originMarker) {
+          this.scene.remove(this.originMarker);
+        }
+        if (this.antipodeMarker) {
+          this.scene.remove(this.antipodeMarker);
+        }
+        if (this.connectionLine) {
+          this.scene.remove(this.connectionLine);
+        }
+        
+        this.originMarker = this.createMarker(point, 0xff0000);
+        const antipodePoint = this.latLonToVector3(antipodeLat, antipodeLon);
+        this.antipodeMarker = this.createMarker(antipodePoint, 0xff0000);
+        
+        this.connectionLine = this.createConnectionLine(point, antipodePoint);
+        
+        this.scene.add(this.originMarker);
+        this.scene.add(this.antipodeMarker);
+        this.scene.add(this.connectionLine);
+        
+        // 获取位置信息
+        this.getLocationInfo(lat, lon, antipodeLat, antipodeLon);
+        
+        // 显示信息面板
+        this.showInfo = true;
       }
     },
     
-    searchLocation() {
-      if (!this.locationInput.trim()) {
-        this.error = "请输入位置";
-        return;
-      }
-      
-      this.error = null;
-      
-      // 使用OpenStreetMap Nominatim服务进行地理编码
-      axios.get(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(this.locationInput)}`)
-        .then(response => {
-          if (response.data && response.data.length > 0) {
-            const location = response.data[0];
-            this.currentCoords.lat = parseFloat(location.lat);
-            this.currentCoords.lon = parseFloat(location.lon);
-            this.getAntipodeInfo(this.currentCoords.lat, this.currentCoords.lon);
-          } else {
-            this.error = "找不到该位置，请尝试更具体的地点";
-          }
-        })
-        .catch(error => {
-          this.error = `搜索位置时出错: ${error.message}`;
-        });
-    },
-    
-    getAntipodeInfo(lat, lon) {
-      // 向后端API请求对面位置信息
+    getLocationInfo(lat, lon, antipodeLat, antipodeLon) {
+      // 获取原始位置信息
       axios.get(`http://localhost:5000/api/antipode?lat=${lat}&lon=${lon}`)
         .then(response => {
-          const data = response.data;
-          
-          // 更新对面位置的坐标
-          this.antipodeCoords.lat = data.antipode.lat;
-          this.antipodeCoords.lon = data.antipode.lon;
-          
-          // 更新信息
-          this.originInfo = data.origin.info;
-          this.antipodeInfo = data.antipode.info;
-          
-          // 显示地图
-          this.showMaps = true;
-          
-          // 需要等待DOM更新后再更新地图
-          this.$nextTick(() => {
-            this.updateMaps();
-          });
+          this.originInfo = response.data.origin.info;
+          this.antipodeInfo = response.data.antipode.info;
         })
         .catch(error => {
-          this.error = `获取对面位置信息时出错: ${error.message}`;
+          console.error('Error fetching location info:', error);
         });
     },
     
-    updateMaps() {
-      // 更新原始位置地图
-      this.originMap.setView([this.currentCoords.lat, this.currentCoords.lon], 10);
-      
-      // 更新对面位置地图
-      this.antipodeMap.setView([this.antipodeCoords.lat, this.antipodeCoords.lon], 10);
-      
-      // 清除已有标记
-      if (this.originMarker) {
-        this.originMap.removeLayer(this.originMarker);
-      }
-      
-      if (this.antipodeMarker) {
-        this.antipodeMap.removeLayer(this.antipodeMarker);
-      }
-      
-      // 添加新标记
-      this.originMarker = L.marker([this.currentCoords.lat, this.currentCoords.lon])
-        .addTo(this.originMap)
-        .bindPopup("您的位置")
-        .openPopup();
-      
-      this.antipodeMarker = L.marker([this.antipodeCoords.lat, this.antipodeCoords.lon])
-        .addTo(this.antipodeMap)
-        .bindPopup("对面的位置")
-        .openPopup();
-      
-      // 刷新地图大小以确保正确显示
-      this.originMap.invalidateSize();
-      this.antipodeMap.invalidateSize();
+    onWindowResize() {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    },
+    
+    animate() {
+      requestAnimationFrame(this.animate);
+      this.controls.update();
+      this.renderer.render(this.scene, this.camera);
+    },
+    
+    dispose() {
+      this.renderer.dispose();
     }
   }
 };
@@ -237,126 +277,71 @@ body {
   font-family: 'Arial', sans-serif;
   line-height: 1.6;
   color: #333;
-  background-color: #f4f4f4;
+  background-color: #000;
+  overflow: hidden;
 }
 
 .app-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
   text-align: center;
-  margin-bottom: 30px;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
 }
 
 header h1 {
-  color: #2c3e50;
-  font-size: 2.5rem;
-}
-
-.location-input {
-  max-width: 600px;
-  margin: 0 auto 40px;
-  padding: 20px;
-  background-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-.input-group {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 15px;
-}
-
-.input-group label {
-  margin-bottom: 5px;
-  font-weight: bold;
-}
-
-.input-group input {
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 16px;
+  font-size: 2rem;
   margin-bottom: 10px;
 }
 
-button {
-  padding: 10px 15px;
-  background-color: #3498db;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: background-color 0.3s;
+.instructions {
+  font-size: 1rem;
+  opacity: 0.8;
 }
 
-button:hover {
-  background-color: #2980b9;
-}
-
-.or-divider {
-  text-align: center;
-  margin: 15px 0;
-  color: #666;
-}
-
-.current-location-btn {
-  width: 100%;
-  padding: 12px;
-  background-color: #2ecc71;
-}
-
-.current-location-btn:hover {
-  background-color: #27ae60;
-}
-
-.error-message {
-  color: #e74c3c;
-  margin-top: 15px;
-  padding: 10px;
-  background-color: #fadbd8;
-  border-radius: 4px;
-}
-
-.maps-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-  margin-bottom: 40px;
-}
-
-.map-wrapper {
+.globe-container {
   flex: 1;
-  min-width: 300px;
-  background-color: #fff;
+  position: relative;
+}
+
+#globe {
+  width: 100%;
+  height: 100%;
+}
+
+.info-panel {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 300px;
+  max-height: 80vh;
+  background: rgba(255, 255, 255, 0.9);
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
   padding: 20px;
+  overflow-y: auto;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
-.map-wrapper h2 {
-  margin-bottom: 15px;
+.info-content h3 {
   color: #2c3e50;
-}
-
-.map {
-  height: 400px;
-  border-radius: 4px;
-  margin-bottom: 20px;
-}
-
-.location-info {
-  margin-top: 20px;
-}
-
-.location-info h3 {
   margin-bottom: 15px;
-  color: #2c3e50;
+}
+
+.info-content p {
+  margin-bottom: 10px;
+  color: #666;
 }
 
 .place-info {
@@ -365,19 +350,20 @@ button:hover {
   border-bottom: 1px solid #eee;
 }
 
-.place-info h4 {
+.place-info h5 {
   color: #3498db;
   margin-bottom: 10px;
 }
 
 .place-info p {
   margin-bottom: 10px;
-  color: #666;
+  font-size: 0.9rem;
 }
 
 .place-info a {
   color: #3498db;
   text-decoration: none;
+  font-size: 0.9rem;
 }
 
 .place-info a:hover {
@@ -385,29 +371,23 @@ button:hover {
 }
 
 .no-info {
-  padding: 20px;
+  padding: 15px;
   background-color: #f9f9f9;
   border-radius: 4px;
   color: #666;
-  text-align: center;
+  font-size: 0.9rem;
 }
 
 footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
   text-align: center;
-  margin-top: 40px;
-  padding-top: 20px;
-  border-top: 1px solid #eee;
-  color: #666;
-}
-
-@media (max-width: 768px) {
-  .maps-container {
-    flex-direction: column;
-  }
-  
-  .map-wrapper {
-    min-width: 100%;
-  }
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  z-index: 100;
 }
 </style>
 

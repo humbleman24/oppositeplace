@@ -11,8 +11,8 @@
   "dependencies": {
     "vue": "^3.2.45",
     "axios": "^1.2.1",
-    "leaflet": "^1.9.3",
-    "vue-leaflet": "^0.1.0"
+    "three": "^0.160.0",
+    "gsap": "^3.12.5"
   },
   "devDependencies": {
     "@babel/core": "^7.12.16",
