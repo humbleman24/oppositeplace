@@ -1,0 +1,24 @@
+{
+  "name": "find-opposite-place",
+  "version": "1.0.0",
+  "description": "查找地球对面的位置及相关信息",
+  "private": true,
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint"
+  },
+  "dependencies": {
+    "vue": "^3.2.45",
+    "axios": "^1.2.1",
+    "leaflet": "^1.9.3",
+    "vue-leaflet": "^0.1.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.8",
+    "@vue/cli-plugin-eslint": "~5.0.8",
+    "@vue/cli-service": "~5.0.8",
+    "eslint": "^8.31.0",
+    "eslint-plugin-vue": "^9.8.0"
+  }
+} 
